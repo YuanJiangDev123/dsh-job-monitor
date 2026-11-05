@@ -1,0 +1,4 @@
+- insert:
+    - id: job-monitor
+      name: dsh-job-monitor
+      config: {}
