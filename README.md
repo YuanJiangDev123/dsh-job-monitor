@@ -2,6 +2,7 @@
 
 包名 `dsh-job-monitor`（bundle 包，含 Host 补丁与 Web 客户端）。
 
+- **从 GitHub**：`git clone https://github.com/YuanJiangDev123/dsh-job-monitor.git`，把目录路径交给 `install_bundle`。
 - **本地目录 / 解压后**：在 DSH 里执行 `plugin_manager` 的 `install_bundle`，`target` 指向本目录的绝对路径。
 - **打包分发**：`npm pack` 生成 `dsh-job-monitor-<version>.tgz`，对方解压成目录后按上面安装；或把 tgz 直接交给 `install_bundle`。
 - **npm 发布后**：`target` 直接用包名 `dsh-job-monitor`。
