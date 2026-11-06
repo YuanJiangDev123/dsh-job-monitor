@@ -437,6 +437,9 @@ window.__ModuleLoader__.load({
     }
 
     /** Display order used by the purpose grouping and its headers. */
+    /** Set once the page has committed at least once in this module instance. */
+    let pageMounted = false;
+
     const PURPOSE_ORDER = [
       'download',
       'network',
@@ -1205,6 +1208,7 @@ window.__ModuleLoader__.load({
       const snapshot = useJobsSnapshot(store);
 
       React.useEffect(() => {
+        pageMounted = true;
         writeStored(SETTING_WAS_ACTIVE, '1');
       }, []);
 
@@ -2182,30 +2186,46 @@ window.__ModuleLoader__.load({
       // until another panel is chosen. Re-assert the selection once, immediately
       // after this registration lands, and only while this panel is already the
       // active one.
-      let wokePanel = false;
+      // The shell clears the selected panel whenever a module reload drops its
+      // registration. Re-selecting once may land before the main slot renders its
+      // React tree, so retry a few times with a wide gap. Toggling too often
+      // discards the in-flight render, so the first attempt only re-selects when
+      // the shell dropped the selection, and toggling starts on the second one.
+      let wakeAttempts = 0;
       const wakeRestoredPanel = () => {
-        if (wokePanel) return;
+        wakeAttempts += 1;
+        if (pageMounted || wakeAttempts > 4) return;
+        let active;
         try {
-          const active = ctx.layout.panelInfo.getSnapshot().activePanelId;
-          const wasActive = readStored(SETTING_WAS_ACTIVE, '') === '1';
-          if (active === PANEL_ID) {
-            ctx.layout.selectPanel(null);
-            ctx.layout.selectPanel(PANEL_ID);
-            wokePanel = true;
-            return;
-          }
+          active = ctx.layout.panelInfo.getSnapshot().activePanelId;
+        } catch {
+          return;
+        }
+        const wasActive = readStored(SETTING_WAS_ACTIVE, '') === '1';
+        try {
           if (active === null && wasActive) {
             ctx.layout.selectPanel(PANEL_ID);
-            wokePanel = true;
+          } else if (active === PANEL_ID && wakeAttempts >= 2) {
+            // Two updates in one tick batch back to the same value, so the shell
+            // never re-renders; space them apart.
+            ctx.layout.selectPanel(null);
+            window.setTimeout(() => {
+              try {
+                ctx.layout.selectPanel(PANEL_ID);
+              } catch {
+                /* ignore */
+              }
+            }, 150);
           }
         } catch {
           /* layout is optional; choosing the panel again still renders it */
         }
+        window.setTimeout(wakeRestoredPanel, 1200);
       };
 
       ctx.slots.inject('main', () => {
         const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, PageEntry);
-        window.setTimeout(wakeRestoredPanel, 0);
+        window.setTimeout(wakeRestoredPanel, 400);
         return dispose;
       });
 
