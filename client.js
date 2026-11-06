@@ -31,6 +31,8 @@ window.__ModuleLoader__.load({
     const MAX_OBSERVE = 4;
     const SETTING_WATCH = 'dsh-job-monitor:watch-limit';
     const SETTING_OBSERVE = 'dsh-job-monitor:observe-limit';
+    const SETTING_DENSITY = 'dsh-job-monitor:density';
+    const SETTING_PINS = 'dsh-job-monitor:pins';
 
     /**
      * Clamp a stored numeric setting. A missing, non-numeric or out-of-range value
@@ -124,6 +126,14 @@ window.__ModuleLoader__.load({
 .jp-kind{padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);font-size:10px;line-height:15px;flex:none}
 .jp-sepdot{opacity:.45;flex:none}
 .jp-tag{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px;margin-left:2px}
+.jp-find{display:flex;align-items:center;gap:8px;flex:none;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.jp-find input{flex:1;height:26px;padding:0 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}
+.jp-hit{background:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-bg-base);border-radius:2px}
+.jp-pin{flex:none;border:0;background:0 0;padding:0;width:18px;height:18px;line-height:18px;border-radius:4px;color:var(--dsw-alias-label-secondary);opacity:.5;cursor:pointer;font-size:12px}
+.jp-pin:hover{opacity:1;background:var(--dsw-alias-bg-layer-2)}
+.jp-pin-on{opacity:1;color:var(--dsw-alias-state-warn-primary)}
+.jp-compact .jp-line2{display:none}
+.jp-compact .jp-row{padding-top:5px;padding-bottom:5px}
 .jp-badge{flex:none;padding:0 6px;border-radius:999px;font-size:10px;line-height:16px}
 .jp-badge-warn{background:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-bg-base)}
 .jp-settings{display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:none;padding:8px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:12px;color:var(--dsw-alias-label-secondary)}
@@ -573,6 +583,49 @@ window.__ModuleLoader__.load({
     /** Stand-in for the page when its own render fails. */
     function CrashFace({ t, error, onRetry }) {
       const [copied, setCopied] = React.useState(false);
+      const shown = React.useMemo(() => {
+        if (find === '' || !onlyMatches) return text;
+        const needle = find.toLowerCase();
+        return text
+          .split(String.fromCharCode(10))
+          .filter((line) => line.toLowerCase().includes(needle))
+          .join(String.fromCharCode(10));
+      }, [text, find, onlyMatches]);
+
+      const nodes = React.useMemo(() => {
+        if (find === '' || shown === '') return shown;
+        const needle = find.toLowerCase();
+        const lower = shown.toLowerCase();
+        const parts = [];
+        let index = 0;
+        let hits = 0;
+        while (hits < 400) {
+          const at = lower.indexOf(needle, index);
+          if (at < 0) break;
+          if (at > index) parts.push(shown.slice(index, at));
+          parts.push(h('mark', { key: `hit-${at}`, className: 'jp-hit' }, shown.slice(at, at + needle.length)));
+          index = at + needle.length;
+          hits += 1;
+        }
+        if (index < shown.length) parts.push(shown.slice(index));
+        return parts;
+      }, [shown, find]);
+
+      const hits = React.useMemo(() => {
+        if (find === '') return 0;
+        const needle = find.toLowerCase();
+        const lower = shown.toLowerCase();
+        let count = 0;
+        let index = 0;
+        while (count < 400) {
+          const at = lower.indexOf(needle, index);
+          if (at < 0) break;
+          count += 1;
+          index = at + needle.length;
+        }
+        return count;
+      }, [shown, find]);
+
       const copy = () => {
         const detail = String(error?.stack ?? error?.message ?? error ?? '');
         const clipboard = window.navigator?.clipboard;
@@ -611,6 +664,8 @@ window.__ModuleLoader__.load({
       const timerRef = React.useRef(undefined);
       const [following, setFollowing] = React.useState(true);
       const [copied, setCopied] = React.useState(false);
+      const [find, setFind] = React.useState('');
+      const [onlyMatches, setOnlyMatches] = React.useState(false);
       const full = React.useMemo(() => stripAnsi(view?.text ?? ''), [view]);
       const { text, clipped } = React.useMemo(() => tailSlice(full, RENDER_TAIL), [full]);
 
@@ -674,6 +729,30 @@ window.__ModuleLoader__.load({
             : null,
           clipped ? h('div', { className: 'jp-notice' }, t('output.clipped')) : null,
           h(
+            'div',
+            { className: 'jp-find' },
+            h('input', {
+              type: 'search',
+              value: find,
+              placeholder: t('find.placeholder'),
+              'aria-label': t('find.placeholder'),
+              onChange: (event) => setFind(event.target.value),
+            }),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'jp-chip',
+                'aria-pressed': onlyMatches,
+                onClick: () => setOnlyMatches((current) => !current),
+              },
+              t('find.only'),
+            ),
+            find === ''
+              ? null
+              : h('span', { className: 'jp-meta' }, t('find.matches', { count: hits })),
+          ),
+          h(
             'pre',
             {
               ref: preRef,
@@ -681,7 +760,7 @@ window.__ModuleLoader__.load({
               onScroll,
               'aria-label': t('output.aria', { label: job.label }),
             },
-            text === '' ? t('output.empty') : text,
+            text === '' ? t('output.empty') : nodes,
           ),
           following ? null : h('button', { type: 'button', className: 'jp-jump', onClick: jump }, t('console.jump')),
         ),
@@ -790,7 +869,7 @@ window.__ModuleLoader__.load({
     }
 
     /** One row in the task table. */
-    const Row = React.memo(function Row({ job, store, sessionTitle, selected, now, killPhase, onSelect, onPressKill, onOpenSession, t }) {
+    const Row = React.memo(function Row({ job, store, sessionTitle, selected, now, killPhase, pinned, onTogglePin, onSelect, onPressKill, onOpenSession, t }) {
       const live = isLive(job);
       const { progress, kind, etaMs, stalled } = useProgress(job, store, now);
       const outcome = abnormalOf(job);
@@ -844,6 +923,21 @@ window.__ModuleLoader__.load({
           h('span', { key: 'dot', className: rowDotClass(job), 'aria-hidden': true }),
           h('span', { key: 'label', className: 'jp-label', title: job.label }, job.label),
           h('span', { key: 'tag', className: 'jp-tag', title: t('group.purpose') }, t(`purpose.${purposeOf(job)}`)),
+          h(
+            'button',
+            {
+              key: 'pin',
+              type: 'button',
+              className: pinned ? 'jp-pin jp-pin-on' : 'jp-pin',
+              'aria-pressed': pinned,
+              title: pinned ? t('pin.remove') : t('pin.add'),
+              onClick: (event) => {
+                event.stopPropagation();
+                onTogglePin(String(job.id));
+              },
+            },
+            pinned ? '★' : '☆',
+          ),
           h(
             'span',
             { key: 'bar', className: indeterminate ? 'jp-bar jp-bar-indeterminate' : 'jp-bar', title: barTitle },
@@ -945,8 +1039,14 @@ window.__ModuleLoader__.load({
             if (!seen.has(key)) seen.set(key, job);
           }
         }
-        return sortJobs([...seen.values()]);
-      }, [snapshot, watched]);
+        const sorted = sortJobs([...seen.values()]);
+        if (pins.length === 0) return sorted;
+        const pinnedIds = new Set(pins);
+        return [
+          ...sorted.filter((job) => pinnedIds.has(String(job.id))),
+          ...sorted.filter((job) => !pinnedIds.has(String(job.id))),
+        ];
+      }, [snapshot, watched, pins]);
 
       const [now, setNow] = React.useState(() => Date.now());
       const [statusFilter, setStatusFilter] = React.useState(() => {
@@ -956,6 +1056,15 @@ window.__ModuleLoader__.load({
       const [watchLimit, setWatchLimit] = useNumberSetting(SETTING_WATCH, MAX_WATCH, 5, 200);
       const [observeLimit, setObserveLimit] = useNumberSetting(SETTING_OBSERVE, MAX_OBSERVE, 1, 12);
       const [settingsOpen, setSettingsOpen] = React.useState(false);
+      const [density, setDensity] = React.useState(() => (readStored(SETTING_DENSITY, 'cozy') === 'compact' ? 'compact' : 'cozy'));
+      const [pins, setPins] = React.useState(() => {
+        try {
+          const parsed = JSON.parse(readStored(SETTING_PINS, '[]'));
+          return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+        } catch {
+          return [];
+        }
+      });
       const [groupMode, setGroupMode] = React.useState(() => {
         const stored = readStored('dsh-job-monitor:group', 'status');
         return ['status', 'session', 'kind', 'none'].includes(stored) ? stored : 'status';
@@ -1112,6 +1221,43 @@ window.__ModuleLoader__.load({
 
       const selectRow = React.useCallback((id) => setSelectedId(id), []);
 
+      const togglePin = React.useCallback((id) => {
+        setPins((current) => {
+          const next = current.includes(id) ? current.filter((value) => value !== id) : [...current, id];
+          writeStored(SETTING_PINS, JSON.stringify(next));
+          return next;
+        });
+      }, []);
+
+      const exportReport = React.useCallback(() => {
+        const rows = [t('export.heading'), ''];
+        for (const job of allJobs) {
+          rows.push(`## ${job.label}`);
+          rows.push(`- ${t('export.status')}: ${t(`status.${job.status}`)}`);
+          rows.push(`- ${t('export.purpose')}: ${t(`purpose.${purposeOf(job)}`)}`);
+          rows.push(`- ${t('export.duration')}: ${formatDuration((job.finishedAt ?? Date.now()) - job.startedAt, t)}`);
+          rows.push(`- ${t('export.output')}: ${formatBytes(job.output?.total ?? 0)}`);
+          rows.push(`- ${t('export.started')}: ${clockTime(job.startedAt)}`);
+          if (job.detail !== undefined) rows.push(`- ${t('export.detail')}: ${job.detail}`);
+          rows.push('');
+        }
+        const blob = new Blob([rows.join(String.fromCharCode(10))], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'job-report.md';
+        anchor.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      }, [allJobs, t]);
+
+      const toggleDensity = React.useCallback(() => {
+        setDensity((current) => {
+          const next = current === 'compact' ? 'cozy' : 'compact';
+          writeStored(SETTING_DENSITY, next);
+          return next;
+        });
+      }, []);
+
       // Stable identity so memoized rows are not invalidated by unrelated renders.
       const pressKill = React.useCallback((job) => {
         const key = String(job.id);
@@ -1200,6 +1346,8 @@ window.__ModuleLoader__.load({
                       selected: String(job.id) === selectedKey,
                       now,
                       killPhase: killState?.id === String(job.id) ? killState.phase : 'idle',
+                      pinned: pins.includes(String(job.id)),
+                      onTogglePin: togglePin,
                       onSelect: selectRow,
                       onPressKill: pressKill,
                       t,
@@ -1218,7 +1366,7 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         {
-          className: 'jp-page',
+          className: density === 'compact' ? 'jp-page jp-compact' : 'jp-page',
           onKeyDown: (event) => {
             const target = event.target;
             const typing =
@@ -1226,6 +1374,31 @@ window.__ModuleLoader__.load({
             if (event.key === '/' && !typing) {
               event.preventDefault();
               searchRef.current?.focus();
+              return;
+            }
+            if (typing) return;
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setSelectedId(undefined);
+              return;
+            }
+            if (event.key === 'g' || event.key === 'G') {
+              const target = event.key === 'g' ? visible[0] : visible[visible.length - 1];
+              if (target !== undefined) {
+                event.preventDefault();
+                setSelectedId(String(target.id));
+              }
+              return;
+            }
+            if (selected === undefined) return;
+            if (event.key === 'x') {
+              event.preventDefault();
+              pressKill(selected);
+              return;
+            }
+            if (event.key === 'r') {
+              event.preventDefault();
+              copyCommand();
             }
           },
         },
@@ -1248,6 +1421,27 @@ window.__ModuleLoader__.load({
               'aria-label': t('search.placeholder'),
               onChange: (event) => setQuery(event.target.value),
             }),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'jp-chip jp-gear',
+                title: t('export.button'),
+                onClick: exportReport,
+              },
+              t('export.button'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'jp-chip jp-gear',
+                'aria-pressed': density === 'compact',
+                title: t('density.title'),
+                onClick: toggleDensity,
+              },
+              density === 'compact' ? t('density.cozy') : t('density.compact'),
+            ),
             h(
               'button',
               {
@@ -1496,6 +1690,22 @@ window.__ModuleLoader__.load({
       'filter.done': '已完成',
       'filter.abnormal': '异常',
       'group.label': '分组',
+      'export.button': '导出报告',
+      'export.heading': '# 后台任务报告',
+      'export.status': '状态',
+      'export.purpose': '用途',
+      'export.duration': '耗时',
+      'export.output': '输出',
+      'export.started': '开始',
+      'export.detail': '详情',
+      'find.placeholder': '在输出里搜索',
+      'find.only': '只看匹配行',
+      'find.matches': '{count} 处匹配',
+      'pin.add': '置顶',
+      'pin.remove': '取消置顶',
+      'density.title': '切换行高',
+      'density.compact': '紧凑',
+      'density.cozy': '舒适',
       'row.eta': '剩余约 {time}',
       'row.stalled': '可能停滞',
       'row.stalledHint': '运行中但 90 秒没有新输出，可能卡住了。',
@@ -1583,6 +1793,22 @@ window.__ModuleLoader__.load({
       'filter.done': 'Finished',
       'filter.abnormal': 'Abnormal',
       'group.label': 'Group',
+      'export.button': 'Export report',
+      'export.heading': '# Background job report',
+      'export.status': 'Status',
+      'export.purpose': 'Purpose',
+      'export.duration': 'Duration',
+      'export.output': 'Output',
+      'export.started': 'Started',
+      'export.detail': 'Detail',
+      'find.placeholder': 'Search output',
+      'find.only': 'Matches only',
+      'find.matches': '{count} matches',
+      'pin.add': 'Pin to top',
+      'pin.remove': 'Unpin',
+      'density.title': 'Toggle row height',
+      'density.compact': 'Compact',
+      'density.cozy': 'Cozy',
       'row.eta': '{time} left',
       'row.stalled': 'stalled?',
       'row.stalledHint': 'Running but silent for 90 seconds; it may be stuck.',
