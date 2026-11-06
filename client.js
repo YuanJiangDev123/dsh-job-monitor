@@ -61,6 +61,10 @@ window.__ModuleLoader__.load({
     const DEFAULT_WATCH = MAX_WATCH;
     /** Stable empty roster so a session with no jobs keeps one array identity. */
     const EMPTY = [];
+    /** Window used to turn observed progress into a remaining time. */
+    const RATE_WINDOW_MS = 20000;
+    /** Silence long enough to call a running job stalled. */
+    const STALL_MS = 90000;
     /** How long an armed stop waits for its confirming press. */
     const KILL_ARM_MS = 3000;
     /** How long a failed stop keeps its hint before the control resets. */
@@ -120,6 +124,8 @@ window.__ModuleLoader__.load({
 .jp-kind{padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);font-size:10px;line-height:15px;flex:none}
 .jp-sepdot{opacity:.45;flex:none}
 .jp-tag{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px;margin-left:2px}
+.jp-badge{flex:none;padding:0 6px;border-radius:999px;font-size:10px;line-height:16px}
+.jp-badge-warn{background:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-bg-base)}
 .jp-settings{display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:none;padding:8px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:12px;color:var(--dsw-alias-label-secondary)}
 .jp-setting{display:inline-flex;align-items:center;gap:6px}
 .jp-setting input{width:64px;height:24px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:0 6px}
@@ -710,6 +716,7 @@ window.__ModuleLoader__.load({
      */
     function useProgress(job, store, now) {
       const held = React.useRef({ id: undefined, value: undefined });
+      const meterRef = React.useRef({ id: undefined, since: 0, sinceRatio: 0, total: 0, seenAt: 0 });
       const live = job !== undefined && isLive(job);
       const measured = job === undefined ? undefined : progressOf(job);
       const view = useObserved(store, live && measured === undefined ? String(job.id) : undefined);
@@ -749,13 +756,43 @@ window.__ModuleLoader__.load({
         }
       }
 
-      return { progress: chosen, kind };
+      // Rolling rate over a short window, turned into a remaining time. Estimates
+      // are excluded because they are already derived from elapsed time.
+      const meter = meterRef.current;
+      let etaMs;
+      if (live && chosen !== undefined) {
+        if (meter.id !== id) {
+          meterRef.current = { id, since: now, sinceRatio: chosen.ratio, total: job.output?.total ?? 0, seenAt: now };
+        } else {
+          if (now - meter.since >= RATE_WINDOW_MS) {
+            meter.since = now;
+            meter.sinceRatio = chosen.ratio;
+          }
+          if (now - meter.since > 0 && kind !== 'estimated' && chosen.ratio > 0 && chosen.ratio < 1) {
+            const rate = (chosen.ratio - meter.sinceRatio) / (now - meter.since);
+            if (rate > 1e-7) etaMs = (1 - chosen.ratio) / rate;
+          }
+          const total = job.output?.total ?? 0;
+          if (total !== meter.total) {
+            meter.total = total;
+            meter.seenAt = now;
+          }
+        }
+      }
+
+      const stalled =
+        live &&
+        meterRef.current.id === id &&
+        now - meterRef.current.seenAt > STALL_MS &&
+        now - job.startedAt > STALL_MS;
+
+      return { progress: chosen, kind, etaMs, stalled };
     }
 
     /** One row in the task table. */
     const Row = React.memo(function Row({ job, store, sessionTitle, selected, now, killPhase, onSelect, onPressKill, onOpenSession, t }) {
       const live = isLive(job);
-      const { progress, kind } = useProgress(job, store, now);
+      const { progress, kind, etaMs, stalled } = useProgress(job, store, now);
       const outcome = abnormalOf(job);
       const duration = formatDuration(
         live ? now - job.startedAt : (job.finishedAt ?? job.startedAt) - job.startedAt,
@@ -776,6 +813,10 @@ window.__ModuleLoader__.load({
           : kind === 'estimated'
             ? t('progress.estimated')
             : undefined;
+      const etaLabel =
+        live && etaMs !== undefined && etaMs > 1000 && etaMs < 6 * 3600 * 1000
+          ? t('row.eta', { time: formatDuration(etaMs, t) })
+          : undefined;
       const killTitle =
         killPhase === 'armed'
           ? t('kill.confirm')
@@ -823,6 +864,10 @@ window.__ModuleLoader__.load({
                   h('span', { key: 'v' }, progress.label),
                 ],
           ),
+          stalled
+            ? h('span', { key: 'stall', className: 'jp-badge jp-badge-warn', title: t('row.stalledHint') }, t('row.stalled'))
+            : null,
+          etaLabel === undefined ? null : h('span', { key: 'eta', className: 'jp-meta' }, `· ${etaLabel}`),
           h('span', {
             key: 'duration',
             className: 'jp-duration',
@@ -1163,6 +1208,13 @@ window.__ModuleLoader__.load({
                 ),
               );
 
+      const overall = React.useMemo(() => {
+        const meters = live.map((job) => progressOf(job)).filter((value) => value !== undefined);
+        if (meters.length < 2) return undefined;
+        const sum = meters.reduce((total, value) => total + value.ratio, 0);
+        return Math.round((sum / meters.length) * 100);
+      }, [live]);
+
       return h(
         'div',
         {
@@ -1183,6 +1235,7 @@ window.__ModuleLoader__.load({
           { className: 'jp-head' },
           h('h1', { className: 'jp-title' }, t('page.title')),
           h('span', { className: 'jp-sub' }, t('page.watched', { count: watched.length, total: sessionIds.length })),
+          overall === undefined ? null : h('span', { className: 'jp-sub' }, `· ${t('page.overall', { percent: overall })}`),
           h(
             'div',
             { className: 'jp-toolbar' },
@@ -1443,6 +1496,10 @@ window.__ModuleLoader__.load({
       'filter.done': '已完成',
       'filter.abnormal': '异常',
       'group.label': '分组',
+      'row.eta': '剩余约 {time}',
+      'row.stalled': '可能停滞',
+      'row.stalledHint': '运行中但 90 秒没有新输出，可能卡住了。',
+      'page.overall': '总体 {percent}%',
       'settings.title': '设置',
       'settings.label': '设置',
       'settings.watch': '监视会话上限',
@@ -1526,6 +1583,10 @@ window.__ModuleLoader__.load({
       'filter.done': 'Finished',
       'filter.abnormal': 'Abnormal',
       'group.label': 'Group',
+      'row.eta': '{time} left',
+      'row.stalled': 'stalled?',
+      'row.stalledHint': 'Running but silent for 90 seconds; it may be stuck.',
+      'page.overall': '{percent}% overall',
       'settings.title': 'Settings',
       'settings.label': 'Settings',
       'settings.watch': 'Session watch cap',
