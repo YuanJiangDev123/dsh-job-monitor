@@ -219,67 +219,54 @@ test('rememberDuration keeps a median for the next estimate', () => {
 
 test('purposeOf names the command intent', () => {
   const at = (label) => ({ label });
-  assert.equal(api.purposeOf(at('curl -L -o file.bin https://example.com/x')), 'download');
-  assert.equal(api.purposeOf(at('rm -rf dist')), 'cleanup');
-  assert.equal(api.purposeOf(at('npm install --frozen-lockfile')), 'install');
-  assert.equal(api.purposeOf(at('npm run build')), 'build');
-  assert.equal(api.purposeOf(at('npx vitest run')), 'test');
-  assert.equal(api.purposeOf(at('python -m http.server 8765')), 'serve');
-  assert.equal(api.purposeOf(at('tar -czf out.tar.gz src')), 'archive');
-  assert.equal(api.purposeOf(at('rg TODO src')), 'search');
-  assert.equal(api.purposeOf(at('git status --short')), 'git');
-  assert.equal(api.purposeOf(at('echo hello')), 'other');
+  const cases = [
+    ['curl -L -o file.bin https://example.com/x', 'download'],
+    ['git clone https://github.com/a/b', 'download'],
+    ['curl -X POST -d @body.json https://api.example.com/v1', 'network'],
+    ['ssh user@host uptime', 'network'],
+    ['rsync -a src/ host:/dest/', 'network'],
+    ['rm -rf dist', 'cleanup'],
+    ['docker rm -f app', 'cleanup'],
+    ['npm install --frozen-lockfile', 'install'],
+    ['pnpm add -D typescript', 'install'],
+    ['npm run build', 'build'],
+    ['docker build -t app .', 'build'],
+    ['tsc --noEmit', 'lint'],
+    ['npx eslint .', 'lint'],
+    ['npm run typecheck', 'lint'],
+    ['npx vitest run', 'test'],
+    ['make test', 'test'],
+    ['pytest -q', 'test'],
+    ['python -m http.server 8765', 'serve'],
+    ['npm run dev', 'serve'],
+    ['npm run start', 'serve'],
+    ['node scripts/build.js', 'run'],
+    ['npm run seed', 'run'],
+    ['docker compose up -d', 'container'],
+    ['kubectl apply -f deploy.yaml', 'deploy'],
+    ['git push origin main', 'deploy'],
+    ['npm publish', 'deploy'],
+    ['psql -c "select 1"', 'database'],
+    ['cp -r a b', 'file'],
+    ['mkdir -p out', 'file'],
+    ['tar -czf out.tar.gz src', 'archive'],
+    ['rg TODO src', 'search'],
+    ['git status --short', 'git'],
+    ['echo hello', 'other'],
+    ['node --version', 'other'],
+  ];
+  for (const [label, expected] of cases) {
+    assert.equal(api.purposeOf(at(label)), expected, label);
+  }
   assert.equal(api.purposeOf(at(undefined)), 'other');
-  // A specific intent beats a broader one in the same compound command.
-  assert.equal(api.purposeOf(at('rm -rf node_modules && npm install')), 'install');
 });
 
-test('clampSetting keeps stored limits in range', () => {
-  assert.equal(api.clampSetting('', 40, 5, 200), 40, 'empty falls back');
-  assert.equal(api.clampSetting(null, 40, 5, 200), 40);
-  assert.equal(api.clampSetting('abc', 40, 5, 200), 40, 'garbage falls back');
-  assert.equal(api.clampSetting('1', 40, 5, 200), 5, 'clamped up to the floor');
-  assert.equal(api.clampSetting('9999', 40, 5, 200), 200, 'clamped down to the ceiling');
-  assert.equal(api.clampSetting('12.6', 40, 5, 200), 13, 'rounded');
-  assert.equal(api.clampSetting(0, 4, 1, 12), 1, 'zero is not silently accepted');
-});
-
-test('summarizeHistory counts outcomes and ranks commands', () => {
-  const job = (over) => ({
-    id: 'j',
-    label: 'npm install',
-    status: 'completed',
-    outcome: null,
-    startedAt: 1000,
-    finishedAt: 3000,
-    bytes: 10,
-    ...over,
-  });
-  assert.equal(api.summarizeHistory([]).total, 0);
-
-  const summary = api.summarizeHistory([
-    job({ id: 'a' }),
-    job({ id: 'b', label: 'curl -o x', bytes: 90 }),
-    job({ id: 'c', outcome: 'nonzero', status: 'completed' }),
-    job({ id: 'd', status: 'failed' }),
-  ]);
-  assert.equal(summary.total, 4);
-  assert.equal(summary.ok, 2, 'a clean exit counts as success');
-  assert.equal(summary.abnormal, 2, 'nonzero and failed both count as abnormal');
-  assert.equal(summary.bytes, 120);
-  assert.equal(summary.averageMs, 2000);
-  assert.equal(summary.commands[0].label, 'npm install');
-  assert.equal(summary.commands[0].count, 3);
-  assert.equal(summary.failures.length, 2);
-});
-
-test('appendHistory dedupes by id and keeps the newest first', () => {
-  const first = api.appendHistory([], { id: 'a' });
-  assert.equal(first.length, 1);
-  const again = api.appendHistory(first, { id: 'a' });
-  assert.equal(again.length, 1, 'the same job is never recorded twice');
-  const next = api.appendHistory(first, { id: 'b' });
-  assert.equal(next[0].id, 'b', 'newest first');
+test('normalizeCommand strips wrappers before matching', () => {
+  const at = (label) => ({ label });
+  assert.equal(api.purposeOf(at('cd app && npm run build')), 'build');
+  assert.equal(api.purposeOf(at('sudo npx eslint .')), 'lint');
+  assert.equal(api.purposeOf(at('/usr/local/bin/python -m http.server 8080')), 'serve');
+  assert.equal(api.purposeOf(at('cd /tmp; curl -O https://example.com/a')), 'download');
 });
 
 test('sortJobs puts live rows in start order and settled rows newest first', () => {

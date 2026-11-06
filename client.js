@@ -436,23 +436,69 @@ window.__ModuleLoader__.load({
       return Math.min(0.99, 0.95 + 0.04 * (1 - Math.exp(-(elapsed - total) / total)));
     }
 
-    /** Order used by the purpose grouping and its headers. */
-    const PURPOSE_ORDER = ['download', 'install', 'build', 'test', 'serve', 'archive', 'search', 'cleanup', 'git', 'other'];
+    /** Display order used by the purpose grouping and its headers. */
+    const PURPOSE_ORDER = [
+      'download',
+      'network',
+      'install',
+      'build',
+      'test',
+      'lint',
+      'run',
+      'serve',
+      'container',
+      'deploy',
+      'database',
+      'file',
+      'archive',
+      'cleanup',
+      'search',
+      'git',
+      'other',
+    ];
+
+    /** Leading wrappers that never change what a command actually does. */
+    const COMMAND_WRAPPERS = /^\s*(?:sudo\s+|env\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*|time\s+|npx\s+|pnpx\s+|bunx\s+)+/i;
 
     /**
-     * Command shapes that name the job's intent. First match wins, so the list is
-     * ordered from the most specific intent to the broadest: an `npm install`
-     * that also removes a cache is still an install.
+     * Reduce a command to the part that names its intent: drop a leading
+     * directory change, environment wrappers, and an absolute path in front of
+     * the program. `cd build && npx vite build` becomes `vite build`.
+     */
+    function normalizeCommand(label) {
+      let text = String(label ?? '');
+      for (let depth = 0; depth < 3; depth += 1) {
+        const next = text.replace(/^\s*cd\s+[^&;|]*(?:&&|;|\|)\s*/i, '');
+        if (next === text) break;
+        text = next;
+      }
+      text = text.replace(COMMAND_WRAPPERS, '');
+      text = text.replace(/^(?:[A-Za-z]:)?(?:[\\/][^\s"']*[\\/])/, '');
+      return text.trim();
+    }
+
+    /**
+     * Command shapes that name the job's intent. First match wins, so the list
+     * runs from the most specific intent to the broadest: a `make test` is a
+     * test, a `docker build` is a build, and `git push` deploys rather than
+     * being filed as plain Git.
      */
     const PURPOSE_RULES = [
-      ['install', /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun|pip3?|pipx|apt|apt-get|brew|winget|choco|cargo|gem|composer|poetry|uv|go)\s+(?:install|add|i|ci|sync|get)\b/i],
-      ['build', /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b|\b(?:tsc|vite\s+build|webpack|rollup|esbuild|make|cmake|cargo\s+build|gradle|mvn|msbuild|dotnet\s+build)\b/i],
-      ['test', /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|\b(?:pytest|jest|vitest|mocha|playwright|cypress|go\s+test|cargo\s+test|dotnet\s+test)\b/i],
-      ['download', /\b(?:curl|wget|aria2c|invoke-webrequest|iwr|start-bitstransfer|scp|rsync|git\s+clone|git\s+fetch|pip\s+download|npm\s+pack)\b/i],
+      ['lint', /\b(?:eslint|stylelint|prettier|ruff|flake8|pylint|mypy|clippy|shellcheck|phpcs|rubocop)\b|\btsc\b[^\n]*--noEmit|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|format)\b/i],
+      ['test', /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?::[\w-]+)?\b|\b(?:pytest|jest|vitest|mocha|playwright|cypress|phpunit|rspec|ctest|make\s+test|go\s+test|cargo\s+(?:test|nextest)|dotnet\s+test)\b/i],
+      ['install', /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun|pip3?|pipx|apt|apt-get|brew|winget|choco|scoop|cargo|gem|composer|poetry|uv|go|dotnet)\s+(?:install|add|i|ci|sync|get|restore)\b/i],
+      ['build', /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b|\b(?:tsc|vite\s+build|next\s+build|webpack|rollup|esbuild|turbo\s+build|make|cmake|cargo\s+build|gradle|mvn|msbuild|dotnet\s+build|docker\s+build|gcc|g\+\+|clang|rustc)\b/i],
+      ['database', /\b(?:psql|mysql|mariadb|sqlite3|redis-cli|mongosh|mongo|pg_dump|mysqldump|prisma|alembic|flyway|liquibase)\b/i],
+      ['deploy', /\b(?:git\s+push|docker\s+push|kubectl|helm|vercel|netlify|firebase\s+deploy|flyctl|fly\s+deploy|gh\s+release|npm\s+publish|pm2\s+(?:start|restart))(?:\s|$)|\b(?:npm|pnpm|yarn)\s+run\s+(?:deploy|release|publish)\b/i],
+      ['cleanup', /\b(?:rm|rmdir|del|erase|pkill|kill|taskkill|truncate|prune|unlink|shred)\b|\bgit\s+clean\b|\bdocker\s+(?:rm|rmi|prune)\b/i],
+      ['container', /\b(?:docker|podman|docker-compose|lazydocker)\b/i],
+      ['serve', /\b(?:http\.server|vite|next\s+dev|nodemon|uvicorn|gunicorn|flask\s+run|webpack\s+serve|ng\s+serve|serve|watch)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b/i],
+      ['run', /\b(?:npm|pnpm|yarn|bun)\s+run\s+[\w:-]+|\b(?:node|python3?|bash|sh|pwsh|powershell|ruby|php|deno)\s+[^\s-]\S*|\b\.\/\S+/i],
+      ['network', /\b(?:ssh|scp|sftp|rsync|ping|tracert|netstat|nmap|dig|nslookup|telnet|Invoke-RestMethod|irm)\b|\bcurl\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE)|-d\s|--data|-F\s|--form|-T\s|--upload-file)/i],
+      ['download', /\b(?:curl|wget|aria2c|invoke-webrequest|iwr|start-bitstransfer|git\s+clone|git\s+fetch|git\s+pull|pip\s+download|npm\s+pack)\b/i],
       ['archive', /\b(?:tar|zip|unzip|7z|gzip|gunzip|xz|rar)\b/i],
-      ['cleanup', /\b(?:rm|rmdir|del|erase|pkill|kill|taskkill|truncate|prune|unlink|shred)\b|\bgit\s+clean\b/i],
-      ['serve', /\b(?:http\.server|vite|next\s+dev|nodemon|uvicorn|gunicorn|flask\s+run|serve|watch)\b/i],
-      ['search', /\b(?:rg|grep|ag|ack|fd|find|whereis)\b/i],
+      ['file', /\b(?:cp|mv|mkdir|touch|ln|chmod|chown|robocopy|xcopy|copy|attrib|mkfifo)\b/i],
+      ['search', /\b(?:rg|grep|ag|ack|fd|find|whereis|locate)\b/i],
       ['git', /\bgit\b/i],
     ];
 
@@ -470,9 +516,10 @@ window.__ModuleLoader__.load({
       const text = String(job?.label ?? '');
       const cached = purposeCache.get(text);
       if (cached !== undefined) return cached;
+      const command = normalizeCommand(text);
       let found = 'other';
       for (const [id, rule] of PURPOSE_RULES) {
-        if (rule.test(text)) {
+        if (rule.test(command)) {
           found = id;
           break;
         }
@@ -480,14 +527,6 @@ window.__ModuleLoader__.load({
       if (purposeCache.size > 500) purposeCache.clear();
       purposeCache.set(text, found);
       return found;
-    }
-
-    /** Wall-clock time of one timestamp, for tooltips. */
-    function clockTime(value) {
-      if (typeof value !== 'number' || !Number.isFinite(value)) return '';
-      const date = new Date(value);
-      const pad = (part) => String(part).padStart(2, '0');
-      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     }
 
     /** The session the main view currently retains. */
@@ -1917,6 +1956,13 @@ window.__ModuleLoader__.load({
       'group.kind': '类型',
       'group.purpose': '用途',
       'purpose.download': '下载',
+      'purpose.network': '网络',
+      'purpose.lint': '检查',
+      'purpose.run': '运行',
+      'purpose.container': '容器',
+      'purpose.deploy': '部署',
+      'purpose.database': '数据库',
+      'purpose.file': '文件',
       'purpose.install': '安装',
       'purpose.build': '构建',
       'purpose.test': '测试',
@@ -2032,6 +2078,13 @@ window.__ModuleLoader__.load({
       'group.kind': 'Kind',
       'group.purpose': 'Purpose',
       'purpose.download': 'download',
+      'purpose.network': 'network',
+      'purpose.lint': 'lint',
+      'purpose.run': 'run',
+      'purpose.container': 'container',
+      'purpose.deploy': 'deploy',
+      'purpose.database': 'database',
+      'purpose.file': 'file',
       'purpose.install': 'install',
       'purpose.build': 'build',
       'purpose.test': 'test',

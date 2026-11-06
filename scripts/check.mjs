@@ -90,6 +90,18 @@ else if (positions.some((value, index) => index > 0 && value < positions[index -
   fail.push('page declarations are out of order: ' + declarationOrder.join(' -> '));
 }
 
+// Every category the classifier can return needs a label in both dictionaries.
+const orderMatch = /const PURPOSE_ORDER = \[([^\]]+)\]/.exec(source);
+if (orderMatch === null) fail.push('PURPOSE_ORDER is missing');
+else {
+  const ids = [...orderMatch[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+  for (const id of ids) {
+    for (const dict of [zh, en]) {
+      if (!(`purpose.${id}` in dict)) fail.push(`purpose.${id} has no dictionary entry`);
+    }
+  }
+}
+
 // Sized boxes must not stay inline: width/height are ignored on an inline span.
 const fillRule = /\.jp-fill\{([^}]*)\}/.exec(source);
 if (fillRule === null) fail.push('.jp-fill rule is missing');
