@@ -2084,7 +2084,7 @@ window.__ModuleLoader__.load({
     };
 
     /** Required Client services: the shared job streams, slots, and dictionaries. */
-    const inject = ['jobs', 'slots', 'locale'];
+    const inject = ['jobs', 'slots', 'locale', 'layout'];
 
     /**
      * Client plugin body: install styles and dictionaries, register the page and
@@ -2116,7 +2116,30 @@ window.__ModuleLoader__.load({
           h(Page, { ...props, jobs, openSession }),
         );
 
-      ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, PageEntry));
+      // The application restores the selected panel before a profile bundle has
+      // registered its occupant. That first render draws an empty key, and
+      // re-selecting the same value does not notify, so the page would stay blank
+      // until another panel is chosen. Re-assert the selection once, immediately
+      // after this registration lands, and only while this panel is already the
+      // active one.
+      let wokePanel = false;
+      const wakeRestoredPanel = () => {
+        if (wokePanel) return;
+        try {
+          if (ctx.layout.panelInfo.getSnapshot().activePanelId !== PANEL_ID) return;
+          wokePanel = true;
+          ctx.layout.selectPanel(null);
+          ctx.layout.selectPanel(PANEL_ID);
+        } catch {
+          /* layout is optional; choosing the panel again still renders it */
+        }
+      };
+
+      ctx.slots.inject('main', () => {
+        const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, PageEntry);
+        window.setTimeout(wakeRestoredPanel, 0);
+        return dispose;
+      });
 
       ctx.slots.inject('sidebar.panellist', () =>
         ctx.slots.register(
@@ -2124,6 +2147,8 @@ window.__ModuleLoader__.load({
           PanelIcon,
         ),
       );
+
+
     }
 
     /** Pure helpers exposed to the Node test harness only; never in a bundle. */
