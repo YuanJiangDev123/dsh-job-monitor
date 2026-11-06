@@ -1163,6 +1163,36 @@ window.__ModuleLoader__.load({
       const store = jobs.state;
       const snapshot = useJobsSnapshot(store);
 
+      const [now, setNow] = React.useState(() => Date.now());
+      const [statusFilter, setStatusFilter] = React.useState(() => {
+        const stored = readStored('dsh-job-monitor:filter', 'all');
+        return ['all', 'live', 'done', 'abnormal'].includes(stored) ? stored : 'all';
+      });
+      const [watchLimit, setWatchLimit] = useNumberSetting(SETTING_WATCH, MAX_WATCH, 5, 200);
+      const [observeLimit, setObserveLimit] = useNumberSetting(SETTING_OBSERVE, MAX_OBSERVE, 1, 12);
+      const [settingsOpen, setSettingsOpen] = React.useState(false);
+      const [density, setDensity] = React.useState(() => (readStored(SETTING_DENSITY, 'cozy') === 'compact' ? 'compact' : 'cozy'));
+      const [history, setHistory] = React.useState(() => loadHistory());
+      const [view, setView] = React.useState('jobs');
+      const [pins, setPins] = React.useState(() => {
+        try {
+          const parsed = JSON.parse(readStored(SETTING_PINS, '[]'));
+          return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+        } catch {
+          return [];
+        }
+      });
+      const [groupMode, setGroupMode] = React.useState(() => {
+        const stored = readStored('dsh-job-monitor:group', 'status');
+        return ['status', 'purpose', 'session', 'kind', 'none'].includes(stored) ? stored : 'status';
+      });
+      const [query, setQuery] = React.useState('');
+      const [selectedId, setSelectedId] = React.useState(undefined);
+      const [killState, setKillState] = React.useState(undefined);
+      const [announcement, setAnnouncement] = React.useState('');
+      const terminalStates = React.useRef(new Map());
+      const searchRef = React.useRef(null);
+
       const sessionIds = React.useMemo(
         () => (Array.isArray(sessions.ids) ? sessions.ids : Object.keys(sessions.byId)),
         [sessions],
@@ -1186,35 +1216,6 @@ window.__ModuleLoader__.load({
         ];
       }, [snapshot, watched, pins]);
 
-      const [now, setNow] = React.useState(() => Date.now());
-      const [statusFilter, setStatusFilter] = React.useState(() => {
-        const stored = readStored('dsh-job-monitor:filter', 'all');
-        return ['all', 'live', 'done', 'abnormal'].includes(stored) ? stored : 'all';
-      });
-      const [watchLimit, setWatchLimit] = useNumberSetting(SETTING_WATCH, MAX_WATCH, 5, 200);
-      const [observeLimit, setObserveLimit] = useNumberSetting(SETTING_OBSERVE, MAX_OBSERVE, 1, 12);
-      const [settingsOpen, setSettingsOpen] = React.useState(false);
-      const [density, setDensity] = React.useState(() => (readStored(SETTING_DENSITY, 'cozy') === 'compact' ? 'compact' : 'cozy'));
-      const [history, setHistory] = React.useState(() => loadHistory());
-      const [view, setView] = React.useState('jobs');
-      const [pins, setPins] = React.useState(() => {
-        try {
-          const parsed = JSON.parse(readStored(SETTING_PINS, '[]'));
-          return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
-        } catch {
-          return [];
-        }
-      });
-      const [groupMode, setGroupMode] = React.useState(() => {
-        const stored = readStored('dsh-job-monitor:group', 'status');
-        return ['status', 'session', 'kind', 'none'].includes(stored) ? stored : 'status';
-      });
-      const [query, setQuery] = React.useState('');
-      const [selectedId, setSelectedId] = React.useState(undefined);
-      const [killState, setKillState] = React.useState(undefined);
-      const [announcement, setAnnouncement] = React.useState('');
-      const terminalStates = React.useRef(new Map());
-      const searchRef = React.useRef(null);
 
       const live = React.useMemo(() => allJobs.filter(isLive), [allJobs]);
       const currentSession = useSessions(selectCurrentSession);

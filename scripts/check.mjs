@@ -81,6 +81,15 @@ for (const prop of customProps) {
 }
 
 // 5. Registration shape the slot owner expects.
+// State that a memo consumes must be declared before it, or every render throws
+// a temporal-dead-zone error the slot cannot show.
+const declarationOrder = ['const [watchLimit', 'const [pins', 'const sessionIds', 'const watched', 'const allJobs'];
+const positions = declarationOrder.map((needle) => source.indexOf(needle));
+if (positions.some((value) => value < 0)) fail.push('page declarations are missing: ' + declarationOrder.join(' / '));
+else if (positions.some((value, index) => index > 0 && value < positions[index - 1])) {
+  fail.push('page declarations are out of order: ' + declarationOrder.join(' -> '));
+}
+
 // Sized boxes must not stay inline: width/height are ignored on an inline span.
 const fillRule = /\.jp-fill\{([^}]*)\}/.exec(source);
 if (fillRule === null) fail.push('.jp-fill rule is missing');
