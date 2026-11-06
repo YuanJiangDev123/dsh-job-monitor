@@ -1,6 +1,25 @@
+# 后台任务面板 · dsh-job-monitor
+
+[![npm](https://img.shields.io/npm/v/dsh-job-monitor)](https://www.npmjs.com/package/dsh-job-monitor)
+[![license](https://img.shields.io/npm/l/dsh-job-monitor)](./LICENSE)
+
 ## 安装
 
-包名 `dsh-job-monitor`（bundle 包，含 Host 补丁与 Web 客户端）。
+**最快的方式（npm）**：在 DSH 里让 `plugin_manager` 用 `install_bundle` 安装，`target` 填 **`dsh-job-monitor`**。
+
+```bash
+npm install dsh-job-monitor   # 仅工具链/离线分发时需要，DSH 自己会装
+```
+
+其他方式：
+
+```bash
+dsh plugin add dsh-job-monitor
+```
+
+装完刷新页面（或等热更新），左侧栏出现「后台任务」图标。
+
+包名 `dsh-job-monitor`（bundle 包，含 Host 补丁与 Web 客户端）。其他安装方式：
 
 - **从 GitHub**：`git clone https://github.com/YuanJiangDev123/dsh-job-monitor.git`，把目录路径交给 `install_bundle`。
 - **本地目录 / 解压后**：在 DSH 里执行 `plugin_manager` 的 `install_bundle`，`target` 指向本目录的绝对路径。
