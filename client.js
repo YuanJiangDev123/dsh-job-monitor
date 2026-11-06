@@ -2188,10 +2188,16 @@ window.__ModuleLoader__.load({
         try {
           const active = ctx.layout.panelInfo.getSnapshot().activePanelId;
           const wasActive = readStored(SETTING_WAS_ACTIVE, '') === '1';
-          if (active !== PANEL_ID && !(active === null && wasActive)) return;
-          wokePanel = true;
-          ctx.layout.selectPanel(null);
-          ctx.layout.selectPanel(PANEL_ID);
+          if (active === PANEL_ID) {
+            ctx.layout.selectPanel(null);
+            ctx.layout.selectPanel(PANEL_ID);
+            wokePanel = true;
+            return;
+          }
+          if (active === null && wasActive) {
+            ctx.layout.selectPanel(PANEL_ID);
+            wokePanel = true;
+          }
         } catch {
           /* layout is optional; choosing the panel again still renders it */
         }
