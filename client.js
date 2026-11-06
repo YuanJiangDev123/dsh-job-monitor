@@ -25,10 +25,40 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'job-monitor';
     /** Locale namespace for every string this page renders. */
     const NS = 'job-monitor';
-    /** Upper bound on watched sessions: one roster stream each. */
+    /** Largest number of sessions the page opens roster streams for. */
     const MAX_WATCH = 40;
-    /** Upper bound on concurrently observed jobs: one output stream each. */
+    /** Largest number of running jobs whose output is observed at once. */
     const MAX_OBSERVE = 4;
+    const SETTING_WATCH = 'dsh-job-monitor:watch-limit';
+    const SETTING_OBSERVE = 'dsh-job-monitor:observe-limit';
+
+    /**
+     * Clamp a stored numeric setting. A missing, non-numeric or out-of-range value
+     * falls back to the default instead of silently breaking the watch loop.
+     */
+    function clampSetting(raw, fallback, min, max) {
+      const value = Number(raw);
+      if (raw === null || raw === undefined || raw === '' || !Number.isFinite(value)) return fallback;
+      return Math.min(max, Math.max(min, Math.round(value)));
+    }
+
+    /** A number persisted to localStorage, clamped to [min, max]. */
+    function useNumberSetting(key, fallback, min, max) {
+      const [value, setValue] = React.useState(() =>
+        clampSetting(readStored(key, ''), fallback, min, max),
+      );
+      const update = React.useCallback(
+        (next) => {
+          const clamped = clampSetting(next, value, min, max);
+          writeStored(key, String(clamped));
+          setValue(clamped);
+        },
+        [key, min, max, value],
+      );
+      return [value, update];
+    }
+    /** Default upper bound, kept for the config hint. */
+    const DEFAULT_WATCH = MAX_WATCH;
     /** Stable empty roster so a session with no jobs keeps one array identity. */
     const EMPTY = [];
     /** How long an armed stop waits for its confirming press. */
@@ -90,6 +120,12 @@ window.__ModuleLoader__.load({
 .jp-kind{padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);font-size:10px;line-height:15px;flex:none}
 .jp-sepdot{opacity:.45;flex:none}
 .jp-tag{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px;margin-left:2px}
+.jp-settings{display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:none;padding:8px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);font-size:12px;color:var(--dsw-alias-label-secondary)}
+.jp-setting{display:inline-flex;align-items:center;gap:6px}
+.jp-setting input{width:64px;height:24px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:0 6px}
+.jp-setting-hint{flex:1 1 100%;color:var(--dsw-alias-label-secondary);opacity:.85}
+.jp-gear{flex:none;border:1px solid var(--dsw-alias-border-l1)}
+.jp-crash-detail{flex:1;margin:10px 0 0;padding:10px;overflow:auto;border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-state-error-primary);font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap}
 .jp-session{border:0;background:0 0;padding:0;font:inherit;cursor:pointer;border-radius:4px}
 .jp-session:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}
 
@@ -529,27 +565,32 @@ window.__ModuleLoader__.load({
     }
 
     /** Stand-in for the page when its own render fails. */
-    function CrashFace({ t, onRetry }) {
+    function CrashFace({ t, error, onRetry }) {
+      const [copied, setCopied] = React.useState(false);
+      const copy = () => {
+        const detail = String(error?.stack ?? error?.message ?? error ?? '');
+        const clipboard = window.navigator?.clipboard;
+        if (clipboard?.writeText !== undefined) {
+          clipboard.writeText(detail).then(
+            () => setCopied(true),
+            () => undefined,
+          );
+        }
+      };
       return h(
         'div',
-        {
-          className: 'jp-page',
-          onKeyDown: (event) => {
-            const target = event.target;
-            const typing = target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-            if (event.key === '/' && !typing) {
-              event.preventDefault();
-              searchRef.current?.focus();
-            }
-          },
-        },
+        { className: 'jp-page' },
         h(
           'div',
           { className: 'jp-crash', role: 'status' },
           h('span', { className: 'jp-dot jp-dot-failed', 'aria-hidden': true }),
           h('span', null, t('crash.title')),
+          h('button', { type: 'button', className: 'jp-btn', onClick: copy }, copied ? t('crash.copied') : t('crash.copy')),
           h('button', { type: 'button', className: 'jp-btn', onClick: onRetry }, t('crash.retry')),
         ),
+        error === undefined
+          ? null
+          : h('pre', { className: 'jp-crash-detail' }, String(error?.stack ?? error?.message ?? error)),
       );
     }
 
@@ -849,7 +890,7 @@ window.__ModuleLoader__.load({
         () => (Array.isArray(sessions.ids) ? sessions.ids : Object.keys(sessions.byId)),
         [sessions],
       );
-      const watched = React.useMemo(() => sessionIds.slice(0, MAX_WATCH), [sessionIds]);
+      const watched = React.useMemo(() => sessionIds.slice(0, watchLimit), [sessionIds, watchLimit]);
 
       const allJobs = React.useMemo(() => {
         const seen = new Map();
@@ -867,6 +908,9 @@ window.__ModuleLoader__.load({
         const stored = readStored('dsh-job-monitor:filter', 'all');
         return ['all', 'live', 'done', 'abnormal'].includes(stored) ? stored : 'all';
       });
+      const [watchLimit, setWatchLimit] = useNumberSetting(SETTING_WATCH, MAX_WATCH, 5, 200);
+      const [observeLimit, setObserveLimit] = useNumberSetting(SETTING_OBSERVE, MAX_OBSERVE, 1, 12);
+      const [settingsOpen, setSettingsOpen] = React.useState(false);
       const [groupMode, setGroupMode] = React.useState(() => {
         const stored = readStored('dsh-job-monitor:group', 'status');
         return ['status', 'session', 'kind', 'none'].includes(stored) ? stored : 'status';
@@ -962,7 +1006,7 @@ window.__ModuleLoader__.load({
       // Every running job is observed so its own meter line (curl -#, wget,
       // build tools) can fill the bar; the list stays bounded, not the roster.
       const observeKey = live
-        .slice(0, MAX_OBSERVE)
+        .slice(0, observeLimit)
         .map((job) => `${String(job.id)}@${job.owner ?? currentSession ?? ''}`)
         .join('|');
       React.useEffect(() => {
@@ -1121,7 +1165,18 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'jp-page' },
+        {
+          className: 'jp-page',
+          onKeyDown: (event) => {
+            const target = event.target;
+            const typing =
+              target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+            if (event.key === '/' && !typing) {
+              event.preventDefault();
+              searchRef.current?.focus();
+            }
+          },
+        },
         h('span', { className: 'jp-sr', role: 'status', 'aria-live': 'polite' }, announcement),
         h(
           'header',
@@ -1140,8 +1195,51 @@ window.__ModuleLoader__.load({
               'aria-label': t('search.placeholder'),
               onChange: (event) => setQuery(event.target.value),
             }),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'jp-chip jp-gear',
+                'aria-expanded': settingsOpen,
+                'aria-label': t('settings.title'),
+                title: t('settings.title'),
+                onClick: () => setSettingsOpen((open) => !open),
+              },
+              t('settings.label'),
+            ),
           ),
         ),
+        settingsOpen
+          ? h(
+              'div',
+              { className: 'jp-settings' },
+              h(
+                'label',
+                { className: 'jp-setting' },
+                h('span', null, t('settings.watch')),
+                h('input', {
+                  type: 'number',
+                  min: 5,
+                  max: 200,
+                  value: watchLimit,
+                  onChange: (event) => setWatchLimit(event.target.value),
+                }),
+              ),
+              h(
+                'label',
+                { className: 'jp-setting' },
+                h('span', null, t('settings.observe')),
+                h('input', {
+                  type: 'number',
+                  min: 1,
+                  max: 12,
+                  value: observeLimit,
+                  onChange: (event) => setObserveLimit(event.target.value),
+                }),
+              ),
+              h('span', { className: 'jp-setting-hint' }, t('settings.hint', { watch: watchLimit, observe: observeLimit })),
+            )
+          : null,
         h(
           'div',
           { className: 'jp-stats' },
@@ -1345,6 +1443,11 @@ window.__ModuleLoader__.load({
       'filter.done': '已完成',
       'filter.abnormal': '异常',
       'group.label': '分组',
+      'settings.title': '设置',
+      'settings.label': '设置',
+      'settings.watch': '监视会话上限',
+      'settings.observe': '同时观测输出',
+      'settings.hint': '每条会话一条数据流，每个运行中任务一条输出流。当前 {watch} / {observe}。',
       'group.status': '状态',
       'group.session': '会话',
       'group.kind': '类型',
@@ -1383,6 +1486,8 @@ window.__ModuleLoader__.load({
       'console.jump': '跳到最新',
       'crash.title': '任务页面出错了',
       'crash.retry': '重试',
+      'crash.copy': '复制错误',
+      'crash.copied': '已复制',
       'status.running': '运行中',
       'status.stopping': '正在停止',
       'status.completed': '已完成',
@@ -1421,6 +1526,11 @@ window.__ModuleLoader__.load({
       'filter.done': 'Finished',
       'filter.abnormal': 'Abnormal',
       'group.label': 'Group',
+      'settings.title': 'Settings',
+      'settings.label': 'Settings',
+      'settings.watch': 'Session watch cap',
+      'settings.observe': 'Concurrent output streams',
+      'settings.hint': 'One stream per session and one per running job. Now {watch} / {observe}.',
       'group.status': 'Status',
       'group.session': 'Session',
       'group.kind': 'Kind',
@@ -1459,6 +1569,8 @@ window.__ModuleLoader__.load({
       'console.jump': 'Jump to latest',
       'crash.title': 'The jobs page hit an error',
       'crash.retry': 'Retry',
+      'crash.copy': 'Copy error',
+      'crash.copied': 'Copied',
       'status.running': 'running',
       'status.stopping': 'stopping',
       'status.completed': 'completed',
@@ -1511,7 +1623,7 @@ window.__ModuleLoader__.load({
       const PageEntry = (props) =>
         h(
           Boundary,
-          { fallback: (error, reset) => h(CrashFace, { t: props.t ?? t, onRetry: reset }) },
+          { fallback: (error, reset) => h(CrashFace, { t: props.t ?? t, error, onRetry: reset }) },
           h(Page, { ...props, jobs, openSession }),
         );
 
@@ -1536,6 +1648,7 @@ window.__ModuleLoader__.load({
       isLive,
       isObservable,
       selectCurrentSession,
+      clampSetting,
       purposeOf,
       progressOf,
       progressFromOutput,

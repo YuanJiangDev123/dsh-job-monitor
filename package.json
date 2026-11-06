@@ -1,6 +1,6 @@
 {
   "name": "dsh-job-monitor",
-  "version": "3.5.2",
+  "version": "3.6.0",
   "description": "Dedicated background-job dashboard for DSH: all sessions, progress, grouping, and live output.",
   "license": "MIT",
   "repository": {

@@ -234,6 +234,16 @@ test('purposeOf names the command intent', () => {
   assert.equal(api.purposeOf(at('rm -rf node_modules && npm install')), 'install');
 });
 
+test('clampSetting keeps stored limits in range', () => {
+  assert.equal(api.clampSetting('', 40, 5, 200), 40, 'empty falls back');
+  assert.equal(api.clampSetting(null, 40, 5, 200), 40);
+  assert.equal(api.clampSetting('abc', 40, 5, 200), 40, 'garbage falls back');
+  assert.equal(api.clampSetting('1', 40, 5, 200), 5, 'clamped up to the floor');
+  assert.equal(api.clampSetting('9999', 40, 5, 200), 200, 'clamped down to the ceiling');
+  assert.equal(api.clampSetting('12.6', 40, 5, 200), 13, 'rounded');
+  assert.equal(api.clampSetting(0, 4, 1, 12), 1, 'zero is not silently accepted');
+});
+
 test('sortJobs puts live rows in start order and settled rows newest first', () => {
   const rows = [
     job({ id: 'a', status: 'completed', startedAt: 10, finishedAt: 100 }),
