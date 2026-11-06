@@ -134,6 +134,14 @@ window.__ModuleLoader__.load({
 .jp-history-title{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
 .jp-history-row{display:flex;align-items:center;gap:8px;min-width:0;padding:4px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-1)}
 .jp-history-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px/16px ui-monospace,monospace}
+.jp-hchips{display:flex;flex-wrap:wrap;gap:6px;flex:none}
+.jp-hlist{display:flex;flex-direction:column;gap:2px;min-height:0;overflow:auto}
+.jp-hblock{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.jp-hgroup{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);padding:2px 2px 4px}
+.jp-hcount{font:11px/16px ui-monospace,monospace;color:var(--dsw-alias-label-secondary)}
+.jp-hrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:10px;align-items:center;padding:4px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-1)}
+.jp-hname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px/16px ui-monospace,monospace}
+.jp-hmeta{font:11px/16px ui-monospace,monospace;color:var(--dsw-alias-label-secondary);white-space:nowrap}
 .jp-history-foot{display:flex;align-items:center;gap:10px;flex:none}
 .jp-find{display:flex;align-items:center;gap:8px;flex:none;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .jp-find input{flex:1;height:26px;padding:0 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}
@@ -1142,12 +1150,39 @@ window.__ModuleLoader__.load({
 
     /** Read-only ledger of finished jobs, kept locally. */
     function HistoryPanel({ entries, t, onClear }) {
+      const [purposeFilter, setPurposeFilter] = React.useState('all');
       const summary = React.useMemo(() => summarizeHistory(entries), [entries]);
+      const rows = React.useMemo(
+        () =>
+          entries.map((entry) => ({
+            entry,
+            purpose: entry.purpose ?? purposeOf({ label: entry.label }),
+          })),
+        [entries],
+      );
+      const counts = React.useMemo(() => {
+        const map = new Map();
+        for (const row of rows) map.set(row.purpose, (map.get(row.purpose) ?? 0) + 1);
+        return map;
+      }, [rows]);
+      const groups = React.useMemo(() => {
+        const visible = purposeFilter === 'all' ? rows : rows.filter((row) => row.purpose === purposeFilter);
+        const list = [];
+        for (const id of PURPOSE_ORDER) {
+          const items = visible.filter((row) => row.purpose === id);
+          if (items.length > 0) list.push({ id, items });
+        }
+        return list;
+      }, [rows, purposeFilter]);
       const cell = (label, value) =>
         h('div', { className: 'jp-stat jp-stat-static' }, [
           h('span', { key: 'l', className: 'jp-stat-label' }, label),
           h('span', { key: 'v', className: 'jp-stat-value' }, value),
         ]);
+      const chips = [
+        { id: 'all', count: rows.length },
+        ...PURPOSE_ORDER.filter((id) => counts.has(id)).map((id) => ({ id, count: counts.get(id) })),
+      ];
       return h(
         'div',
         { className: 'jp-history' },
@@ -1160,43 +1195,50 @@ window.__ModuleLoader__.load({
         ]),
         h(
           'div',
-          { className: 'jp-history-grid' },
-          h(
-            'div',
-            { className: 'jp-history-col' },
-            h('div', { className: 'jp-history-title' }, t('history.frequent')),
-            summary.commands.length === 0
-              ? h('div', { className: 'jp-meta' }, t('history.empty'))
-              : summary.commands.map((command) =>
-                  h(
-                    'div',
-                    { key: command.label, className: 'jp-history-row', title: command.label },
-                    h('span', { className: 'jp-history-name' }, command.label),
-                    h('span', { className: 'jp-meta' }, `×${command.count}`),
-                    h(
-                      'span',
-                      { className: 'jp-meta' },
-                      command.durationCount === 0 ? '—' : formatDuration(Math.round(command.durationSum / command.durationCount), t),
-                    ),
-                  ),
-                ),
-          ),
-          h(
-            'div',
-            { className: 'jp-history-col' },
-            h('div', { className: 'jp-history-title' }, t('history.failures')),
-            summary.failures.length === 0
-              ? h('div', { className: 'jp-meta' }, t('history.empty'))
-              : summary.failures.map((entry) =>
-                  h(
-                    'div',
-                    { key: entry.id, className: 'jp-history-row', title: entry.label },
-                    h('span', { className: 'jp-history-name' }, entry.label),
-                    h('span', { className: 'jp-badge jp-badge-warn' }, entry.detail ?? entry.status),
-                  ),
-                ),
+          { className: 'jp-hchips', role: 'group', 'aria-label': t('history.byPurpose') },
+          chips.map((chip) =>
+            h(
+              'button',
+              {
+                key: chip.id,
+                type: 'button',
+                className: 'jp-chip',
+                'aria-pressed': purposeFilter === chip.id ? 'true' : 'false',
+                onClick: () => setPurposeFilter(chip.id),
+              },
+              [
+                h('span', { key: 'l' }, chip.id === 'all' ? t('filter.all') : t(`purpose.${chip.id}`)),
+                h('span', { key: 'c', className: 'jp-hcount' }, String(chip.count)),
+              ],
+            ),
           ),
         ),
+        rows.length === 0
+          ? h('div', { className: 'jp-meta' }, t('history.empty'))
+          : h(
+              'div',
+              { className: 'jp-hlist' },
+              groups.map((group) =>
+                h('div', { key: group.id, className: 'jp-hblock' }, [
+                  h('div', { key: 'h', className: 'jp-hgroup' }, [
+                    h('span', { key: 'n' }, t(`purpose.${group.id}`)),
+                    h('span', { key: 'c', className: 'jp-hcount' }, String(group.items.length)),
+                  ]),
+                  ...group.items.map((row) =>
+                    h('div', { key: row.entry.id, className: 'jp-hrow', title: row.entry.label }, [
+                      h('span', { key: 'n', className: 'jp-hname' }, row.entry.label),
+                      h(
+                        'span',
+                        { key: 's', className: `jp-badge${row.entry.outcome ? ' jp-badge-warn' : ''}` },
+                        row.entry.outcome ?? t(`status.${row.entry.status}`),
+                      ),
+                      h('span', { key: 'd', className: 'jp-hmeta' }, row.entry.durationMs === undefined ? '—' : formatDuration(row.entry.durationMs, t)),
+                      h('span', { key: 't', className: 'jp-hmeta' }, clockTime(row.entry.startedAt)),
+                    ]),
+                  ),
+                ]),
+              ),
+            ),
         h(
           'div',
           { className: 'jp-history-foot' },
@@ -1937,6 +1979,7 @@ window.__ModuleLoader__.load({
       'history.failures': '最近的异常',
       'history.empty': '还没有记录',
       'history.hint': '只记录本机已结束的任务（最多 200 条），存在浏览器本地。',
+      'history.byPurpose': '按用途筛选',
       'history.clear': '清空历史',
       'export.button': '导出报告',
       'export.heading': '# 后台任务报告',
@@ -2059,6 +2102,7 @@ window.__ModuleLoader__.load({
       'history.failures': 'Recent failures',
       'history.empty': 'Nothing recorded yet',
       'history.hint': 'Finished jobs only, at most 200 entries, stored in this browser.',
+      'history.byPurpose': 'filter by category',
       'history.clear': 'Clear history',
       'export.button': 'Export report',
       'export.heading': '# Background job report',
