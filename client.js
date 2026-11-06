@@ -486,6 +486,14 @@ window.__ModuleLoader__.load({
      * test, a `docker build` is a build, and `git push` deploys rather than
      * being filed as plain Git.
      */
+    /** HH:MM:SS in the reader's locale, or an empty string for a bad value. */
+    function clockTime(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+      const date = new Date(value);
+      const pad = (part) => String(part).padStart(2, '0');
+      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
     const PURPOSE_RULES = [
       ['lint', /\b(?:eslint|stylelint|prettier|ruff|flake8|pylint|mypy|clippy|shellcheck|phpcs|rubocop)\b|\btsc\b[^\n]*--noEmit|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|format)\b/i],
       ['test', /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?::[\w-]+)?\b|\b(?:pytest|jest|vitest|mocha|playwright|cypress|phpunit|rspec|ctest|make\s+test|go\s+test|cargo\s+(?:test|nextest)|dotnet\s+test)\b/i],
