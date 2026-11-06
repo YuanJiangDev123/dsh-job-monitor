@@ -33,6 +33,8 @@ window.__ModuleLoader__.load({
     const SETTING_OBSERVE = 'dsh-job-monitor:observe-limit';
     const SETTING_DENSITY = 'dsh-job-monitor:density';
     const SETTING_PINS = 'dsh-job-monitor:pins';
+    /** Remembers that the user was on this panel, so a reload can restore it. */
+    const SETTING_WAS_ACTIVE = 'dsh-job-monitor:was-active';
 
     /**
      * Clamp a stored numeric setting. A missing, non-numeric or out-of-range value
@@ -1163,6 +1165,10 @@ window.__ModuleLoader__.load({
       const store = jobs.state;
       const snapshot = useJobsSnapshot(store);
 
+      React.useEffect(() => {
+        writeStored(SETTING_WAS_ACTIVE, '1');
+      }, []);
+
       const [now, setNow] = React.useState(() => Date.now());
       const [statusFilter, setStatusFilter] = React.useState(() => {
         const stored = readStored('dsh-job-monitor:filter', 'all');
@@ -2127,7 +2133,9 @@ window.__ModuleLoader__.load({
       const wakeRestoredPanel = () => {
         if (wokePanel) return;
         try {
-          if (ctx.layout.panelInfo.getSnapshot().activePanelId !== PANEL_ID) return;
+          const active = ctx.layout.panelInfo.getSnapshot().activePanelId;
+          const wasActive = readStored(SETTING_WAS_ACTIVE, '') === '1';
+          if (active !== PANEL_ID && !(active === null && wasActive)) return;
           wokePanel = true;
           ctx.layout.selectPanel(null);
           ctx.layout.selectPanel(PANEL_ID);
