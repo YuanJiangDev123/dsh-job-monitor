@@ -126,6 +126,13 @@ window.__ModuleLoader__.load({
 .jp-kind{padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);font-size:10px;line-height:15px;flex:none}
 .jp-sepdot{opacity:.45;flex:none}
 .jp-tag{flex:none;padding:0 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:10px;line-height:15px;margin-left:2px}
+.jp-history{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;padding:12px;overflow:auto}
+.jp-history-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.jp-history-col{display:flex;flex-direction:column;gap:6px;min-width:0}
+.jp-history-title{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.jp-history-row{display:flex;align-items:center;gap:8px;min-width:0;padding:4px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-1)}
+.jp-history-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px/16px ui-monospace,monospace}
+.jp-history-foot{display:flex;align-items:center;gap:10px;flex:none}
 .jp-find{display:flex;align-items:center;gap:8px;flex:none;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .jp-find input{flex:1;height:26px;padding:0 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;outline:none}
 .jp-hit{background:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-bg-base);border-radius:2px}
@@ -1016,6 +1023,137 @@ window.__ModuleLoader__.load({
       );
     });
 
+    const SETTING_HISTORY = 'dsh-job-monitor:history';
+    const HISTORY_LIMIT = 200;
+
+    function loadHistory() {
+      try {
+        const raw = JSON.parse(readStored(SETTING_HISTORY, '[]'));
+        return Array.isArray(raw) ? raw.filter((entry) => entry !== null && typeof entry.id === 'string') : [];
+      } catch {
+        return [];
+      }
+    }
+
+    /** Append one settled job, newest first, deduplicated by id. */
+    function appendHistory(list, entry) {
+      if (list.some((item) => item.id === entry.id)) return list;
+      const next = [entry, ...list].slice(0, HISTORY_LIMIT);
+      writeStored(SETTING_HISTORY, JSON.stringify(next));
+      return next;
+    }
+
+    /** Aggregates for the history view. */
+    function summarizeHistory(entries) {
+      const total = entries.length;
+      let ok = 0;
+      let abnormal = 0;
+      let bytes = 0;
+      let durationSum = 0;
+      let durationCount = 0;
+      const byCommand = new Map();
+      for (const entry of entries) {
+        if (entry.status === 'completed' && (entry.outcome === undefined || entry.outcome === null)) ok += 1;
+        if (entry.status === 'failed' || entry.outcome === 'failed' || entry.outcome === 'nonzero') abnormal += 1;
+        bytes += typeof entry.bytes === 'number' ? entry.bytes : 0;
+        if (typeof entry.startedAt === 'number' && typeof entry.finishedAt === 'number') {
+          const span = entry.finishedAt - entry.startedAt;
+          if (span >= 0) {
+            durationSum += span;
+            durationCount += 1;
+          }
+        }
+        const key = String(entry.label ?? '');
+        const bucket = byCommand.get(key) ?? { label: key, count: 0, durationSum: 0, durationCount: 0 };
+        bucket.count += 1;
+        if (typeof entry.startedAt === 'number' && typeof entry.finishedAt === 'number') {
+          const span = entry.finishedAt - entry.startedAt;
+          if (span >= 0) {
+            bucket.durationSum += span;
+            bucket.durationCount += 1;
+          }
+        }
+        byCommand.set(key, bucket);
+      }
+      const commands = [...byCommand.values()].sort((left, right) => right.count - left.count).slice(0, 6);
+      const failures = entries.filter((entry) => entry.status === 'failed' || entry.outcome === 'failed' || entry.outcome === 'nonzero').slice(0, 6);
+      return {
+        total,
+        ok,
+        abnormal,
+        bytes,
+        averageMs: durationCount === 0 ? undefined : Math.round(durationSum / durationCount),
+        commands,
+        failures,
+      };
+    }
+
+    /** Read-only ledger of finished jobs, kept locally. */
+    function HistoryPanel({ entries, t, onClear }) {
+      const summary = React.useMemo(() => summarizeHistory(entries), [entries]);
+      const cell = (label, value) =>
+        h('div', { className: 'jp-stat jp-stat-static' }, [
+          h('span', { key: 'l', className: 'jp-stat-label' }, label),
+          h('span', { key: 'v', className: 'jp-stat-value' }, value),
+        ]);
+      return h(
+        'div',
+        { className: 'jp-history' },
+        h('div', { className: 'jp-stats' }, [
+          cell(t('history.total'), String(summary.total)),
+          cell(t('history.ok'), String(summary.ok)),
+          cell(t('history.abnormal'), String(summary.abnormal)),
+          cell(t('history.average'), summary.averageMs === undefined ? '—' : formatDuration(summary.averageMs, t)),
+          cell(t('history.bytes'), formatBytes(summary.bytes)),
+        ]),
+        h(
+          'div',
+          { className: 'jp-history-grid' },
+          h(
+            'div',
+            { className: 'jp-history-col' },
+            h('div', { className: 'jp-history-title' }, t('history.frequent')),
+            summary.commands.length === 0
+              ? h('div', { className: 'jp-meta' }, t('history.empty'))
+              : summary.commands.map((command) =>
+                  h(
+                    'div',
+                    { key: command.label, className: 'jp-history-row', title: command.label },
+                    h('span', { className: 'jp-history-name' }, command.label),
+                    h('span', { className: 'jp-meta' }, `×${command.count}`),
+                    h(
+                      'span',
+                      { className: 'jp-meta' },
+                      command.durationCount === 0 ? '—' : formatDuration(Math.round(command.durationSum / command.durationCount), t),
+                    ),
+                  ),
+                ),
+          ),
+          h(
+            'div',
+            { className: 'jp-history-col' },
+            h('div', { className: 'jp-history-title' }, t('history.failures')),
+            summary.failures.length === 0
+              ? h('div', { className: 'jp-meta' }, t('history.empty'))
+              : summary.failures.map((entry) =>
+                  h(
+                    'div',
+                    { key: entry.id, className: 'jp-history-row', title: entry.label },
+                    h('span', { className: 'jp-history-name' }, entry.label),
+                    h('span', { className: 'jp-badge jp-badge-warn' }, entry.detail ?? entry.status),
+                  ),
+                ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'jp-history-foot' },
+          h('span', { className: 'jp-meta' }, t('history.hint')),
+          h('button', { type: 'button', className: 'jp-btn', onClick: onClear }, t('history.clear')),
+        ),
+      );
+    }
+
     /**
      * The page. Watches every session the client knows about (bounded), merges
      * their rosters, and renders one filterable table plus a live output pane.
@@ -1057,6 +1195,8 @@ window.__ModuleLoader__.load({
       const [observeLimit, setObserveLimit] = useNumberSetting(SETTING_OBSERVE, MAX_OBSERVE, 1, 12);
       const [settingsOpen, setSettingsOpen] = React.useState(false);
       const [density, setDensity] = React.useState(() => (readStored(SETTING_DENSITY, 'cozy') === 'compact' ? 'compact' : 'cozy'));
+      const [history, setHistory] = React.useState(() => loadHistory());
+      const [view, setView] = React.useState('jobs');
       const [pins, setPins] = React.useState(() => {
         try {
           const parsed = JSON.parse(readStored(SETTING_PINS, '[]'));
@@ -1194,6 +1334,20 @@ window.__ModuleLoader__.load({
             if (typeof job.startedAt === 'number' && typeof job.finishedAt === 'number') {
               rememberDuration(job.label, job.finishedAt - job.startedAt);
             }
+            setHistory((current) =>
+              appendHistory(current, {
+                id: String(job.id),
+                label: job.label,
+                purpose: purposeOf(job),
+                status: job.status,
+                outcome: abnormalOf(job) ?? null,
+                startedAt: job.startedAt,
+                finishedAt: job.finishedAt ?? Date.now(),
+                bytes: job.output?.total ?? 0,
+                detail: job.detail,
+                owner: job.owner,
+              }),
+            );
           }
         }
         terminalStates.current = next;
@@ -1426,6 +1580,17 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'jp-chip jp-gear',
+                'aria-pressed': view === 'history',
+                title: t('history.title'),
+                onClick: () => setView((current) => (current === 'history' ? 'jobs' : 'history')),
+              },
+              view === 'history' ? t('history.jobs') : t('history.title'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'jp-chip jp-gear',
                 title: t('export.button'),
                 onClick: exportReport,
               },
@@ -1487,7 +1652,9 @@ window.__ModuleLoader__.load({
               h('span', { className: 'jp-setting-hint' }, t('settings.hint', { watch: watchLimit, observe: observeLimit })),
             )
           : null,
-        h(
+        view === 'history'
+          ? null
+          : h(
           'div',
           { className: 'jp-stats' },
           h(
@@ -1530,7 +1697,9 @@ window.__ModuleLoader__.load({
             h('span', { className: 'jp-stat-value' }, formatBytes(stats.bytes)),
           ),
         ),
-        h(
+        view === 'history'
+          ? null
+          : h(
           'div',
           { className: 'jp-filters' },
           h(
@@ -1583,7 +1752,16 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'jp-body' },
-          h(
+          view === 'history'
+            ? h(HistoryPanel, {
+                entries: history,
+                t,
+                onClear: () => {
+                  writeStored(SETTING_HISTORY, '[]');
+                  setHistory([]);
+                },
+              })
+            : h(
             'section',
             { className: 'jp-pane' },
             h('div', { className: 'jp-pane-head' }, h('span', null, t('list.title', { count: visible.length }))),
@@ -1690,6 +1868,18 @@ window.__ModuleLoader__.load({
       'filter.done': '已完成',
       'filter.abnormal': '异常',
       'group.label': '分组',
+      'history.title': '历史',
+      'history.jobs': '任务',
+      'history.total': '累计',
+      'history.ok': '成功',
+      'history.abnormal': '异常',
+      'history.average': '平均耗时',
+      'history.bytes': '总输出',
+      'history.frequent': '最常跑的命令',
+      'history.failures': '最近的异常',
+      'history.empty': '还没有记录',
+      'history.hint': '只记录本机已结束的任务（最多 200 条），存在浏览器本地。',
+      'history.clear': '清空历史',
       'export.button': '导出报告',
       'export.heading': '# 后台任务报告',
       'export.status': '状态',
@@ -1793,6 +1983,18 @@ window.__ModuleLoader__.load({
       'filter.done': 'Finished',
       'filter.abnormal': 'Abnormal',
       'group.label': 'Group',
+      'history.title': 'History',
+      'history.jobs': 'Jobs',
+      'history.total': 'Total',
+      'history.ok': 'Succeeded',
+      'history.abnormal': 'Abnormal',
+      'history.average': 'Average',
+      'history.bytes': 'Output',
+      'history.frequent': 'Most frequent commands',
+      'history.failures': 'Recent failures',
+      'history.empty': 'Nothing recorded yet',
+      'history.hint': 'Finished jobs only, at most 200 entries, stored in this browser.',
+      'history.clear': 'Clear history',
       'export.button': 'Export report',
       'export.heading': '# Background job report',
       'export.status': 'Status',
@@ -1936,6 +2138,8 @@ window.__ModuleLoader__.load({
       isObservable,
       selectCurrentSession,
       clampSetting,
+      summarizeHistory,
+      appendHistory,
       purposeOf,
       progressOf,
       progressFromOutput,

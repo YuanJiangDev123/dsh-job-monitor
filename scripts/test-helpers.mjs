@@ -244,6 +244,44 @@ test('clampSetting keeps stored limits in range', () => {
   assert.equal(api.clampSetting(0, 4, 1, 12), 1, 'zero is not silently accepted');
 });
 
+test('summarizeHistory counts outcomes and ranks commands', () => {
+  const job = (over) => ({
+    id: 'j',
+    label: 'npm install',
+    status: 'completed',
+    outcome: null,
+    startedAt: 1000,
+    finishedAt: 3000,
+    bytes: 10,
+    ...over,
+  });
+  assert.equal(api.summarizeHistory([]).total, 0);
+
+  const summary = api.summarizeHistory([
+    job({ id: 'a' }),
+    job({ id: 'b', label: 'curl -o x', bytes: 90 }),
+    job({ id: 'c', outcome: 'nonzero', status: 'completed' }),
+    job({ id: 'd', status: 'failed' }),
+  ]);
+  assert.equal(summary.total, 4);
+  assert.equal(summary.ok, 2, 'a clean exit counts as success');
+  assert.equal(summary.abnormal, 2, 'nonzero and failed both count as abnormal');
+  assert.equal(summary.bytes, 120);
+  assert.equal(summary.averageMs, 2000);
+  assert.equal(summary.commands[0].label, 'npm install');
+  assert.equal(summary.commands[0].count, 3);
+  assert.equal(summary.failures.length, 2);
+});
+
+test('appendHistory dedupes by id and keeps the newest first', () => {
+  const first = api.appendHistory([], { id: 'a' });
+  assert.equal(first.length, 1);
+  const again = api.appendHistory(first, { id: 'a' });
+  assert.equal(again.length, 1, 'the same job is never recorded twice');
+  const next = api.appendHistory(first, { id: 'b' });
+  assert.equal(next[0].id, 'b', 'newest first');
+});
+
 test('sortJobs puts live rows in start order and settled rows newest first', () => {
   const rows = [
     job({ id: 'a', status: 'completed', startedAt: 10, finishedAt: 100 }),
