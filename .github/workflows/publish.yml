@@ -1,0 +1,30 @@
+name: publish
+
+# Publishes the package through npm Trusted Publishing (OIDC): no token, no
+# one-time password. npm verifies this repository and workflow file, so a tag
+# pushed by hand cannot publish from somewhere else.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5 or newer for the OIDC exchange.
+      - run: npm install -g npm@latest
+      - run: npm --version
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/check.mjs
+      - run: node --test scripts/test-helpers.mjs
+      - run: npm publish --provenance --access public
